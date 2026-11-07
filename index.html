@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#121212">
+  <title>GymCoach AI - Push-up Form & Rep Counter</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- Top Bar Navigation -->
+    <header class="top-bar">
+      <div class="brand">
+        <span class="brand-icon">⚡</span>
+        <h1 class="brand-title">GymCoach <span class="brand-badge">AI</span></h1>
+      </div>
+
+      <div class="top-controls">
+        <!-- Source Switcher -->
+        <div class="segmented-control" role="group" aria-label="Video Source">
+          <button id="cameraSourceBtn" class="seg-btn active" title="Use Live Camera">
+            <span class="icon">📷</span> <span class="btn-label">Live</span>
+          </button>
+          <button id="fileSourceBtn" class="seg-btn" title="Upload Video File">
+            <span class="icon">📁</span> <span class="btn-label">Video</span>
+          </button>
+        </div>
+
+        <input type="file" id="videoFileInput" accept="video/*" class="visually-hidden">
+
+        <!-- Flip Camera (visible only in camera mode) -->
+        <button id="flipCameraBtn" class="icon-btn" title="Flip Camera" aria-label="Flip Camera">
+          🔄
+        </button>
+
+        <!-- Voice Toggle -->
+        <button id="voiceToggleBtn" class="icon-btn active" title="Voice Feedback On/Off" aria-label="Toggle Voice Feedback">
+          🔊
+        </button>
+
+        <!-- Settings Button -->
+        <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Open Settings">
+          ⚙️
+        </button>
+
+        <!-- Help Guide Button -->
+        <button id="helpBtn" class="icon-btn" title="Setup Guide" aria-label="Open Setup Guide">
+          ❓
+        </button>
+      </div>
+    </header>
+
+    <!-- Workout Viewport Area -->
+    <main class="viewport-wrapper">
+      <div id="videoContainer" class="video-container">
+        <!-- Video element: hidden by default until stream loaded -->
+        <video id="videoElement" playsinline webkit-playsinline muted autoplay></video>
+        <!-- Canvas overlay for skeleton, angles & bounding boxes -->
+        <canvas id="outputCanvas"></canvas>
+
+        <!-- Big 2-3 Meter Readable Rep HUD -->
+        <div class="hud-overlay">
+          <!-- Live Feedback Banner -->
+          <div id="feedbackBanner" class="feedback-banner status-waiting">
+            <span id="feedbackIcon" class="feedback-icon">⏳</span>
+            <span id="feedbackText" class="feedback-text">Starting pose detector...</span>
+          </div>
+
+          <!-- Giant Rep Counter Cards -->
+          <div class="rep-counter-grid">
+            <div class="rep-card total-card">
+              <span class="rep-label">TOTAL REPS</span>
+              <span id="totalRepsDisplay" class="rep-number">0</span>
+            </div>
+            <div class="rep-card good-card">
+              <span class="rep-label">GOOD FORM</span>
+              <span id="goodRepsDisplay" class="rep-number">0</span>
+            </div>
+            <div class="rep-card fault-card">
+              <span class="rep-label">WITH FAULTS</span>
+              <span id="faultRepsDisplay" class="rep-number">0</span>
+            </div>
+          </div>
+
+          <!-- Rep Progress Indicator Ring / Bar -->
+          <div class="rep-gauge-container">
+            <div class="rep-gauge-bar">
+              <div id="depthProgressBar" class="rep-gauge-fill"></div>
+            </div>
+            <span id="repStateBadge" class="state-badge">STATE: IDLE</span>
+          </div>
+
+          <!-- Collapsible Debug HUD -->
+          <div id="debugPanel" class="debug-panel">
+            <div class="debug-header" id="debugToggle">
+              <span class="debug-title">DEBUG METRICS</span>
+              <span id="debugToggleIcon" class="debug-chevron">▼</span>
+            </div>
+            <div id="debugContent" class="debug-content">
+              <div class="debug-row"><span>FPS:</span> <span id="debugFps" class="mono-val">0</span></div>
+              <div class="debug-row"><span>Active Side:</span> <span id="debugSide" class="mono-val">--</span></div>
+              <div class="debug-row"><span>Elbow Angle:</span> <span id="debugElbowAngle" class="mono-val">--°</span></div>
+              <div class="debug-row"><span>Body Angle:</span> <span id="debugBodyAngle" class="mono-val">--°</span></div>
+              <div class="debug-row"><span>Body Inclination:</span> <span id="debugBodyTilt" class="mono-val">--°</span></div>
+              <div class="debug-row"><span>Min Rep Angle:</span> <span id="debugMinAngle" class="mono-val">--°</span></div>
+              <div class="debug-row"><span>Visibility:</span> <span id="debugVisibility" class="mono-val">--</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Initial Loader / Message Overlay -->
+        <div id="loadingOverlay" class="loading-overlay">
+          <div class="spinner"></div>
+          <p id="loadingMessage">Initializing MediaPipe PoseLandmarker...</p>
+          <p class="loading-subtext">Running on-device GPU acceleration</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- Video Playback Scrub Bar (Visible only when video file loaded) -->
+    <div id="fileControlsBar" class="file-controls-bar hidden">
+      <button id="filePlayPauseBtn" class="control-btn" title="Play/Pause">▶</button>
+      <input type="range" id="fileScrubber" class="scrubber" min="0" max="100" value="0" step="0.1">
+      <span id="fileTimeDisplay" class="time-display">00:00 / 00:00</span>
+      <select id="fileSpeedSelect" class="speed-select" title="Playback Speed">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="0.75">0.75x</option>
+        <option value="1" selected>1.0x</option>
+      </select>
+    </div>
+
+    <!-- Bottom Session Controls -->
+    <footer class="bottom-bar">
+      <button id="sessionToggleBtn" class="action-btn primary-action">
+        <span class="btn-icon">▶</span>
+        <span class="btn-text">START SESSION</span>
+      </button>
+      <button id="sessionResetBtn" class="action-btn secondary-action" title="Reset Counter">
+        <span class="btn-icon">↺</span>
+        <span class="btn-text">RESET</span>
+      </button>
+      <button id="sessionEndBtn" class="action-btn tertiary-action" title="End Session & Show Summary">
+        <span class="btn-icon">📊</span>
+        <span class="btn-text">SUMMARY</span>
+      </button>
+    </footer>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="settingsTitle">⚙️ Workout Thresholds</h2>
+          <button id="closeSettingsBtn" class="modal-close" aria-label="Close Settings">✕</button>
+        </div>
+        <div class="modal-body settings-list">
+          <p class="settings-hint">Customize rep angles and form sensitivity. Changes save automatically.</p>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="elbowUpSlider">Elbow Lockout (Up State)</label>
+              <span id="elbowUpVal" class="slider-val">155°</span>
+            </div>
+            <input type="range" id="elbowUpSlider" min="140" max="175" step="1" value="155">
+            <small>Angle elbow must reach to complete and start a rep.</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="elbowDownSlider">Elbow Bottom (Down State)</label>
+              <span id="elbowDownVal" class="slider-val">100°</span>
+            </div>
+            <input type="range" id="elbowDownSlider" min="70" max="120" step="1" value="100">
+            <small>Angle elbow must cross to transition into DOWN state.</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="depthGoodSlider">Ideal Depth Threshold</label>
+              <span id="depthGoodVal" class="slider-val">90°</span>
+            </div>
+            <input type="range" id="depthGoodSlider" min="70" max="100" step="1" value="90">
+            <small>Minimum elbow angle $\le$ this counts as great depth.</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="depthShallowSlider">Shallow Depth Cutoff</label>
+              <span id="depthShallowVal" class="slider-val">105°</span>
+            </div>
+            <input type="range" id="depthShallowSlider" min="95" max="125" step="1" value="105">
+            <small>Reps with min angle &gt; this are marked "Shallow Rep".</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="bodySagSlider">Body Sagging Threshold</label>
+              <span id="bodySagVal" class="slider-val">160°</span>
+            </div>
+            <input type="range" id="bodySagSlider" min="140" max="175" step="1" value="160">
+            <small>Body line angle below this with hips drooping = Sagging.</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="bodyPikeSlider">Body Piking Threshold</label>
+              <span id="bodyPikeVal" class="slider-val">160°</span>
+            </div>
+            <input type="range" id="bodyPikeSlider" min="140" max="175" step="1" value="160">
+            <small>Body line angle below this with hips sticking up = Piking.</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="horizLimitSlider">Max Horizontal Deviation</label>
+              <span id="horizLimitVal" class="slider-val">30°</span>
+            </div>
+            <input type="range" id="horizLimitSlider" min="15" max="45" step="1" value="30">
+            <small>Max angle of shoulder-to-ankle line from horizontal plane.</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="minDurationSlider">Min Rep Duration</label>
+              <span id="minDurationVal" class="slider-val">0.6s</span>
+            </div>
+            <input type="range" id="minDurationSlider" min="0.3" max="1.5" step="0.1" value="0.6">
+            <small>Cycles faster than this are rejected as bounce/jitter.</small>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-labels">
+              <label for="voicePitchSelect">Spoken Feedback Voice</label>
+            </div>
+            <label class="toggle-control">
+              <input type="checkbox" id="voiceToggleCheckbox" checked>
+              <span class="toggle-track"></span>
+              <span>Enable audio coach feedback</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="resetDefaultsBtn" class="btn-text-action">Reset to Defaults</button>
+          <button id="saveSettingsBtn" class="btn-primary-action">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary Modal -->
+    <div id="summaryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="summaryTitle">🎉 Session Complete!</h2>
+          <button id="closeSummaryBtn" class="modal-close" aria-label="Close Summary">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="summary-stats-grid">
+            <div class="stat-box">
+              <span class="stat-label">TOTAL REPS</span>
+              <span id="summaryTotalReps" class="stat-num">0</span>
+            </div>
+            <div class="stat-box success">
+              <span class="stat-label">GOOD FORM</span>
+              <span id="summaryGoodReps" class="stat-num">0</span>
+            </div>
+            <div class="stat-box warning">
+              <span class="stat-label">WITH FAULTS</span>
+              <span id="summaryFaultReps" class="stat-num">0</span>
+            </div>
+            <div class="stat-box info">
+              <span class="stat-label">ACCURACY</span>
+              <span id="summaryAccuracy" class="stat-num">0%</span>
+            </div>
+          </div>
+
+          <div class="summary-highlight">
+            <span class="highlight-title">Most Common Fault:</span>
+            <span id="summaryTopFault" class="highlight-value">None! Clean session!</span>
+          </div>
+
+          <h3>Rep-by-Rep Breakdown</h3>
+          <div class="rep-history-wrapper">
+            <table class="rep-history-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Verdict</th>
+                  <th>Depth (Min °)</th>
+                  <th>Duration</th>
+                  <th>Faults & Notes</th>
+                </tr>
+              </thead>
+              <tbody id="summaryRepList">
+                <!-- Rows injected dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="summaryCloseBtn" class="btn-primary-action">Back to Workout</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Setup Guide Modal / Onboarding -->
+    <div id="helpModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="helpTitle">📐 Setup & Positioning Guide</h2>
+          <button id="closeHelpBtn" class="modal-close" aria-label="Close Guide">✕</button>
+        </div>
+        <div class="modal-body setup-guide-content">
+          <div class="guide-step">
+            <div class="step-badge">1</div>
+            <div class="step-details">
+              <h4>Place Phone on the Floor</h4>
+              <p>Prop your phone up against a wall or bottle on the floor, roughly <strong>2 to 3 meters (7-10 feet)</strong> away.</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <div class="step-badge">2</div>
+            <div class="step-details">
+              <h4>Side Profile View</h4>
+              <p>Position yourself completely side-on to the camera. The app automatically detects which side faces the camera (left or right).</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <div class="step-badge">3</div>
+            <div class="step-details">
+              <h4>Full Body in Frame</h4>
+              <p>Ensure your <strong>head, shoulders, hips, and ankles</strong> remain visible throughout both the top and bottom of the push-up.</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <div class="step-badge">4</div>
+            <div class="step-details">
+              <h4>Good Contrast & Lighting</h4>
+              <p>Avoid harsh backlights (like pointing directly into a bright window). Wear clothes contrasting with your floor background.</p>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="guideDismissBtn" class="btn-primary-action">Got It, Let's Go!</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Main ES Module Application Script -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
