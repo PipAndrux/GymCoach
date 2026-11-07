@@ -42,6 +42,12 @@
    - Post-session summary dialog with accuracy rate, top fault, and rep-by-rep history table.
    - **Spoken Audio Feedback** via Web Speech API (`SpeechSynthesis`).
    - **Screen Wake Lock API** prevents the phone screen from sleeping mid-set.
+9. **Automatic Session Recording & Re-watching**:
+   - **MediaRecorder API**: Automatically captures live workout video during every active session.
+   - **Instant Re-watch**: Watch the recorded workout video in the Session Summary immediately after stopping.
+   - **Replay in Analyzer**: Load the recorded clip directly back into the GymCoach pose analyzer with skeleton tracking, scrubber, and 0.25x-1.0x slow motion.
+   - **On-Device IndexedDB Storage**: Full workout history, stats, and video clips stored locally on the phone (zero cloud, 100% private).
+   - **Download Video**: Export `.mp4` / `.webm` clips to your phone camera roll or computer anytime.
 
 ---
 
@@ -53,7 +59,9 @@ GymCoach/
 ├── style.css         # Athletic dark theme, high-visibility layout & animations
 ├── pose.js           # MediaPipe Tasks Vision loader (GPU first, CPU fallback)
 ├── pushup.js         # Pure mathematical analysis & state machine (No DOM)
-├── app.js            # Controller: stream/file handling, RAF loop, canvas drawing
+├── db.js             # On-device IndexedDB storage for sessions and video blobs
+├── app.js            # Controller: stream/file handling, MediaRecorder, RAF loop
+├── server.mjs        # Lightweight zero-dependency local static server
 └── README.md         # Guide, threshold tuning & technical documentation
 ```
 

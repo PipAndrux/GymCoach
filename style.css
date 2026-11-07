@@ -881,6 +881,238 @@ html, body {
   line-height: 1.35;
 }
 
+/* Recording Status Badge */
+.rec-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 51, 102, 0.2);
+  border: 1px solid rgba(255, 51, 102, 0.6);
+  color: #ff3366;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+}
+
+.rec-badge.hidden {
+  display: none;
+}
+
+.rec-badge.paused {
+  background: rgba(255, 196, 0, 0.2);
+  border-color: rgba(255, 196, 0, 0.6);
+  color: var(--accent-yellow);
+}
+
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  background-color: #ff3366;
+  border-radius: 50%;
+  animation: rec-pulse 1.2s infinite ease-in-out;
+}
+
+.rec-badge.paused .rec-dot {
+  background-color: var(--accent-yellow);
+  animation: none;
+}
+
+@keyframes rec-pulse {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.25); opacity: 1; box-shadow: 0 0 10px #ff3366; }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+/* Video Replay Card in Summary Modal */
+.summary-video-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-card-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.summary-video-card.hidden {
+  display: none;
+}
+
+.video-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.video-title {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--text-main);
+}
+
+.video-duration {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent-cyan);
+  background: rgba(0, 242, 254, 0.1);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.summary-video-wrapper {
+  position: relative;
+  width: 100%;
+  max-height: 240px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#summaryVideoPlayer {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  background: #000;
+}
+
+.summary-video-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-sub-action {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--bg-card-border);
+  color: var(--text-main);
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-sub-action:active {
+  transform: scale(0.97);
+}
+
+.btn-sub-action.primary-sub {
+  background: rgba(0, 180, 216, 0.2);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+/* History Modal & Session Cards */
+.modal-card-lg {
+  max-width: 620px;
+}
+
+.history-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 480px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.history-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-card-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.history-date {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.history-duration {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.history-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  text-align: center;
+}
+
+.history-stat-mini {
+  background: rgba(255, 255, 255, 0.03);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+}
+
+.history-stat-mini .h-val {
+  font-size: 1.1rem;
+  font-weight: 800;
+  display: block;
+}
+
+.history-stat-mini .h-lbl {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.history-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-text-danger {
+  background: transparent;
+  border: none;
+  color: var(--accent-red);
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 6px 12px;
+}
+
+.empty-history-placeholder {
+  text-align: center;
+  padding: 30px 10px;
+  color: var(--text-dim);
+}
+
+.empty-history-icon {
+  font-size: 2.5rem;
+  margin-bottom: 8px;
+}
+
 /* Responsive adjustments */
 @media (min-width: 768px) {
   .total-card .rep-number {

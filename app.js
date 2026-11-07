@@ -3,11 +3,13 @@
  * 
  * Coordinates MediaPipe Pose detection, the push-up analysis state machine,
  * camera streams & video file playback, canvas skeleton drawing,
- * speech synthesis, screen wake lock, and reactive UI updates.
+ * speech synthesis, screen wake lock, live video session recording (MediaRecorder),
+ * on-device IndexedDB storage, and instant workout re-watching.
  */
 
 import { poseService } from "./pose.js";
 import { PushUpAnalyzer, DEFAULT_CONFIG } from "./pushup.js";
+import { storageService } from "./db.js";
 
 // Application State
 const state = {
@@ -28,6 +30,15 @@ const state = {
   frameCount: 0,
   currentFps: 0,
 
+  // Video Recording & Replay State
+  mediaRecorder: null,
+  recordedChunks: [],
+  recordingTimer: null,
+  recordingElapsedSec: 0,
+  activeRecordingMime: "video/webm",
+  currentSessionBlob: null,
+  currentSessionVideoUrl: null,
+
   // Stored thresholds
   config: { ...DEFAULT_CONFIG }
 };
@@ -43,6 +54,7 @@ const DOM = {
   videoFileInput: document.getElementById("videoFileInput"),
   flipCameraBtn: document.getElementById("flipCameraBtn"),
   voiceToggleBtn: document.getElementById("voiceToggleBtn"),
+  historyBtn: document.getElementById("historyBtn"),
   settingsBtn: document.getElementById("settingsBtn"),
   helpBtn: document.getElementById("helpBtn"),
 
@@ -55,6 +67,8 @@ const DOM = {
   loadingMessage: document.getElementById("loadingMessage"),
 
   // HUD
+  recBadge: document.getElementById("recBadge"),
+  recText: document.getElementById("recText"),
   feedbackBanner: document.getElementById("feedbackBanner"),
   feedbackIcon: document.getElementById("feedbackIcon"),
   feedbackText: document.getElementById("feedbackText"),
@@ -112,7 +126,7 @@ const DOM = {
   minDurationSlider: document.getElementById("minDurationSlider"),
   minDurationVal: document.getElementById("minDurationVal"),
 
-  // Summary Modal
+  // Summary Modal & Video Replay
   summaryModal: document.getElementById("summaryModal"),
   closeSummaryBtn: document.getElementById("closeSummaryBtn"),
   summaryCloseBtn: document.getElementById("summaryCloseBtn"),
@@ -122,6 +136,18 @@ const DOM = {
   summaryAccuracy: document.getElementById("summaryAccuracy"),
   summaryTopFault: document.getElementById("summaryTopFault"),
   summaryRepList: document.getElementById("summaryRepList"),
+  summaryVideoCard: document.getElementById("summaryVideoCard"),
+  summaryVideoPlayer: document.getElementById("summaryVideoPlayer"),
+  summaryVideoDuration: document.getElementById("summaryVideoDuration"),
+  summaryDownloadVideoBtn: document.getElementById("summaryDownloadVideoBtn"),
+  summaryReplayAnalyzerBtn: document.getElementById("summaryReplayAnalyzerBtn"),
+
+  // History Modal
+  historyModal: document.getElementById("historyModal"),
+  closeHistoryBtn: document.getElementById("closeHistoryBtn"),
+  closeHistoryBottomBtn: document.getElementById("closeHistoryBottomBtn"),
+  clearAllHistoryBtn: document.getElementById("clearAllHistoryBtn"),
+  historyListContainer: document.getElementById("historyListContainer"),
 
   // Help Modal
   helpModal: document.getElementById("helpModal"),
@@ -242,6 +268,172 @@ function speakFeedback(text, priority = false) {
   } catch (err) {
     console.warn("Speech synthesis error:", err);
   }
+}
+
+// ==========================================================================
+// Video Recording (MediaRecorder) for Workout Session Re-watching
+// ==========================================================================
+
+function getBestVideoMimeType() {
+  const candidates = [
+    "video/mp4;codecs=avc1,mp4a.40.2",
+    "video/mp4",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm"
+  ];
+  for (const type of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) {
+      return type;
+    }
+  }
+  return "";
+}
+
+function startRecording() {
+  if (typeof MediaRecorder === "undefined") {
+    console.warn("MediaRecorder is not supported on this browser.");
+    return;
+  }
+
+  // Obtain stream to record
+  let streamToRecord = state.activeStream;
+  if (!streamToRecord && DOM.videoElement.captureStream) {
+    streamToRecord = DOM.videoElement.captureStream();
+  }
+
+  if (!streamToRecord) {
+    console.warn("[Recording] No active stream available to record.");
+    return;
+  }
+
+  state.recordedChunks = [];
+  state.recordingElapsedSec = 0;
+  const mimeType = getBestVideoMimeType();
+
+  try {
+    const options = mimeType ? { mimeType } : undefined;
+    state.mediaRecorder = new MediaRecorder(streamToRecord, options);
+    state.activeRecordingMime = state.mediaRecorder.mimeType || mimeType || "video/webm";
+
+    state.mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        state.recordedChunks.push(e.data);
+      }
+    };
+
+    // Request data in 1s slices
+    state.mediaRecorder.start(1000);
+
+    // Update UI badge
+    DOM.recBadge.classList.remove("hidden", "paused");
+    DOM.recText.textContent = "REC 00:00";
+
+    if (state.recordingTimer) clearInterval(state.recordingTimer);
+    state.recordingTimer = setInterval(() => {
+      if (state.isSessionActive && !state.isSessionPaused) {
+        state.recordingElapsedSec++;
+        DOM.recText.textContent = `REC ${formatSeconds(state.recordingElapsedSec)}`;
+      }
+    }, 1000);
+
+    console.log(`[Recording] MediaRecorder started with ${state.activeRecordingMime}`);
+  } catch (err) {
+    console.warn("[Recording] Could not start MediaRecorder:", err);
+  }
+}
+
+function pauseRecording() {
+  if (state.mediaRecorder && state.mediaRecorder.state === "recording") {
+    state.mediaRecorder.pause();
+    DOM.recBadge.classList.add("paused");
+    DOM.recText.textContent = "❚❚ REC PAUSED";
+  }
+}
+
+function resumeRecording() {
+  if (state.mediaRecorder && state.mediaRecorder.state === "paused") {
+    state.mediaRecorder.resume();
+    DOM.recBadge.classList.remove("paused");
+    DOM.recText.textContent = `REC ${formatSeconds(state.recordingElapsedSec)}`;
+  }
+}
+
+async function stopRecording() {
+  if (state.recordingTimer) {
+    clearInterval(state.recordingTimer);
+    state.recordingTimer = null;
+  }
+  DOM.recBadge.classList.add("hidden");
+
+  if (!state.mediaRecorder || state.mediaRecorder.state === "inactive") {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    state.mediaRecorder.onstop = () => {
+      if (state.recordedChunks.length > 0) {
+        const blob = new Blob(state.recordedChunks, { type: state.activeRecordingMime });
+        state.currentSessionBlob = blob;
+        console.log(`[Recording] Recorded ${(blob.size / (1024 * 1024)).toFixed(2)} MB video`);
+        resolve(blob);
+      } else {
+        resolve(null);
+      }
+    };
+
+    try {
+      state.mediaRecorder.stop();
+    } catch (err) {
+      console.warn("[Recording] Error stopping MediaRecorder:", err);
+      resolve(null);
+    }
+  });
+}
+
+function downloadVideoBlob(blob, mimeType = "video/webm") {
+  if (!blob) return;
+  const isMp4 = mimeType.toLowerCase().includes("mp4");
+  const ext = isMp4 ? "mp4" : "webm";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `GymCoach_Workout_${new Date().toISOString().slice(0, 10)}_${Date.now()}.${ext}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function replayBlobInAnalyzer(blob) {
+  if (!blob) return;
+
+  // Close modals
+  DOM.summaryModal.classList.add("hidden");
+  DOM.historyModal.classList.add("hidden");
+
+  // Pause live camera and switch to file playback mode
+  stopActiveStream();
+  state.mode = "file";
+  DOM.fileSourceBtn.classList.add("active");
+  DOM.cameraSourceBtn.classList.remove("active");
+  DOM.fileControlsBar.classList.remove("hidden");
+  DOM.flipCameraBtn.style.display = "none";
+  DOM.videoContainer.classList.remove("mirrored");
+
+  const videoUrl = URL.createObjectURL(blob);
+  DOM.videoElement.src = videoUrl;
+  DOM.videoElement.loop = true;
+
+  DOM.videoElement.onloadedmetadata = () => {
+    DOM.fileScrubber.max = DOM.videoElement.duration || 100;
+    updateFileTimeDisplay();
+    DOM.videoElement.play();
+    DOM.filePlayPauseBtn.textContent = "⏸";
+    poseService.resetTimestamp();
+    onVideoSourceReady();
+    updateFeedbackBanner("Replaying session in analyzer! Live skeleton active.", "good", "🔄");
+  };
 }
 
 // ==========================================================================
@@ -468,7 +660,6 @@ function renderLoop(currentHighResTime) {
   }
 
   // Determine frame timestamp
-  // For live camera: performance.now(). For video file: video.currentTime * 1000
   const timestampMs = state.mode === "file" ? (video.currentTime * 1000) : performance.now();
   const timestampSec = timestampMs / 1000;
 
@@ -517,7 +708,6 @@ function updateUI(result) {
 
   // 3. Depth Progress Fill
   if (result.angles && result.angles.elbowAngle !== null) {
-    // 160° is 0% depth, 90° is 100% depth
     const maxA = 160;
     const minA = 90;
     const percent = Math.max(0, Math.min(100, ((maxA - result.angles.elbowAngle) / (maxA - minA)) * 100));
@@ -567,26 +757,29 @@ function handleRepEvent(repEvent) {
 
 function toggleSession() {
   if (!state.isSessionActive) {
-    // Start Session
+    // Start Session & Begin Recording
     state.isSessionActive = true;
     state.isSessionPaused = false;
     DOM.sessionToggleBtn.innerHTML = '<span class="btn-icon">⏸</span><span class="btn-text">PAUSE SESSION</span>';
     DOM.sessionToggleBtn.classList.add("paused");
     requestWakeLock();
+    startRecording();
     speakFeedback("Workout started! Get into position.", true);
   } else if (!state.isSessionPaused) {
-    // Pause Session
+    // Pause Session & Pause Recording
     state.isSessionPaused = true;
     DOM.sessionToggleBtn.innerHTML = '<span class="btn-icon">▶</span><span class="btn-text">RESUME SESSION</span>';
     DOM.sessionToggleBtn.classList.remove("paused");
     releaseWakeLock();
+    pauseRecording();
     speakFeedback("Session paused.", true);
   } else {
-    // Resume Session
+    // Resume Session & Resume Recording
     state.isSessionPaused = false;
     DOM.sessionToggleBtn.innerHTML = '<span class="btn-icon">⏸</span><span class="btn-text">PAUSE SESSION</span>';
     DOM.sessionToggleBtn.classList.add("paused");
     requestWakeLock();
+    resumeRecording();
     speakFeedback("Resuming session.", true);
   }
 }
@@ -601,7 +794,51 @@ function resetSession() {
   updateFeedbackBanner("Session reset. Ready!", "waiting", "⏳");
 }
 
-function showSummaryModal() {
+async function endAndSaveSession() {
+  state.isSessionActive = false;
+  state.isSessionPaused = false;
+  DOM.sessionToggleBtn.innerHTML = '<span class="btn-icon">▶</span><span class="btn-text">START SESSION</span>';
+  DOM.sessionToggleBtn.classList.remove("paused");
+  releaseWakeLock();
+
+  // Stop video recording
+  const videoBlob = await stopRecording();
+
+  const summary = analyzer.getSessionSummary();
+
+  // Save session record to IndexedDB if reps occurred or video exists
+  if (summary.totalReps > 0 || (videoBlob && videoBlob.size > 0)) {
+    try {
+      const sessionId = await storageService.saveSession({
+        id: `workout_${Date.now()}`,
+        timestamp: Date.now(),
+        dateStr: new Date().toLocaleDateString(undefined, {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        }),
+        durationSec: Math.round(state.recordingElapsedSec),
+        totalReps: summary.totalReps,
+        goodReps: summary.goodReps,
+        faultReps: summary.faultReps,
+        accuracyPercent: summary.accuracyPercent,
+        topFault: summary.topFault,
+        repHistory: summary.history,
+        videoBlob: videoBlob,
+        videoMimeType: state.activeRecordingMime || "video/webm"
+      });
+      console.log("[Storage] Workout session successfully saved to IndexedDB:", sessionId);
+    } catch (err) {
+      console.error("[Storage] Failed to save session to IndexedDB:", err);
+    }
+  }
+
+  showSummaryModal(videoBlob);
+}
+
+function showSummaryModal(videoBlob = state.currentSessionBlob) {
   const summary = analyzer.getSessionSummary();
 
   DOM.summaryTotalReps.textContent = summary.totalReps;
@@ -610,10 +847,23 @@ function showSummaryModal() {
   DOM.summaryAccuracy.textContent = `${summary.accuracyPercent}%`;
   DOM.summaryTopFault.textContent = summary.topFault;
 
+  // Render Video Player Replay Card
+  if (videoBlob && videoBlob.size > 0) {
+    if (state.currentSessionVideoUrl) {
+      URL.revokeObjectURL(state.currentSessionVideoUrl);
+    }
+    state.currentSessionVideoUrl = URL.createObjectURL(videoBlob);
+    DOM.summaryVideoPlayer.src = state.currentSessionVideoUrl;
+    DOM.summaryVideoDuration.textContent = formatSeconds(state.recordingElapsedSec);
+    DOM.summaryVideoCard.classList.remove("hidden");
+  } else {
+    DOM.summaryVideoCard.classList.add("hidden");
+  }
+
   // Render Table
   DOM.summaryRepList.innerHTML = "";
   if (summary.history.length === 0) {
-    DOM.summaryRepList.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:16px;">No reps recorded yet.</td></tr>`;
+    DOM.summaryRepList.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:16px;">No reps recorded in this session.</td></tr>`;
   } else {
     for (const r of summary.history) {
       const row = document.createElement("tr");
@@ -630,6 +880,126 @@ function showSummaryModal() {
   }
 
   DOM.summaryModal.classList.remove("hidden");
+}
+
+// ==========================================================================
+// History Modal (All Saved Workouts & Replays)
+// ==========================================================================
+
+async function openHistoryModal() {
+  DOM.historyModal.classList.remove("hidden");
+  await renderHistoryList();
+}
+
+async function renderHistoryList() {
+  DOM.historyListContainer.innerHTML = '<div class="spinner" style="margin:20px auto;"></div>';
+
+  try {
+    const sessions = await storageService.getAllSessions();
+    DOM.historyListContainer.innerHTML = "";
+
+    if (sessions.length === 0) {
+      DOM.historyListContainer.innerHTML = `
+        <div class="empty-history-placeholder">
+          <div class="empty-history-icon">📭</div>
+          <p>No saved workouts found.</p>
+          <small>Start a workout session and click SUMMARY to automatically record and rewatch your sets!</small>
+        </div>
+      `;
+      return;
+    }
+
+    for (const s of sessions) {
+      const card = document.createElement("div");
+      card.className = "history-card";
+      const hasVideo = !!(s.videoBlob && s.videoBlob.size > 0);
+      const durationStr = formatSeconds(s.durationSec || 0);
+
+      card.innerHTML = `
+        <div class="history-header">
+          <span class="history-date">📅 ${s.dateStr}</span>
+          <span class="history-duration">⏱️ ${durationStr}</span>
+        </div>
+        <div class="history-stats">
+          <div class="history-stat-mini">
+            <span class="h-val">${s.totalReps}</span>
+            <span class="h-lbl">Total</span>
+          </div>
+          <div class="history-stat-mini">
+            <span class="h-val" style="color:var(--accent-green);">${s.goodReps}</span>
+            <span class="h-lbl">Good</span>
+          </div>
+          <div class="history-stat-mini">
+            <span class="h-val" style="color:var(--accent-cyan);">${s.accuracyPercent}%</span>
+            <span class="h-lbl">Accuracy</span>
+          </div>
+        </div>
+        ${hasVideo ? `
+          <div class="history-video-preview hidden" id="preview_wrap_${s.id}">
+            <video controls playsinline style="width:100%; max-height:220px; border-radius:8px; margin-top:8px; background:#000;"></video>
+          </div>
+        ` : ''}
+        <div class="history-card-actions">
+          ${hasVideo ? `
+            <button class="btn-sub-action watch-btn" data-id="${s.id}">
+              ▶️ Watch Video
+            </button>
+            <button class="btn-sub-action primary-sub replay-btn" data-id="${s.id}">
+              🔄 Replay in App
+            </button>
+            <button class="btn-sub-action download-btn" data-id="${s.id}">
+              📥 Download
+            </button>
+          ` : '<span style="font-size:0.75rem; color:var(--text-dim); padding:6px 0;">No video recorded</span>'}
+          <button class="btn-text-danger delete-btn" data-id="${s.id}" style="margin-left:auto;">
+            🗑️ Delete
+          </button>
+        </div>
+      `;
+
+      if (hasVideo) {
+        const watchBtn = card.querySelector(".watch-btn");
+        const replayBtn = card.querySelector(".replay-btn");
+        const downloadBtn = card.querySelector(".download-btn");
+        const previewWrap = card.querySelector(`#preview_wrap_${s.id}`);
+        const previewVideo = previewWrap.querySelector("video");
+
+        watchBtn.addEventListener("click", () => {
+          if (previewWrap.classList.contains("hidden")) {
+            previewVideo.src = URL.createObjectURL(s.videoBlob);
+            previewWrap.classList.remove("hidden");
+            previewVideo.play();
+            watchBtn.textContent = "⏸️ Hide Video";
+          } else {
+            previewVideo.pause();
+            previewWrap.classList.add("hidden");
+            watchBtn.textContent = "▶️ Watch Video";
+          }
+        });
+
+        replayBtn.addEventListener("click", () => {
+          replayBlobInAnalyzer(s.videoBlob);
+        });
+
+        downloadBtn.addEventListener("click", () => {
+          downloadVideoBlob(s.videoBlob, s.videoMimeType);
+        });
+      }
+
+      const deleteBtn = card.querySelector(".delete-btn");
+      deleteBtn.addEventListener("click", async () => {
+        if (confirm("Delete this saved workout?")) {
+          await storageService.deleteSession(s.id);
+          await renderHistoryList();
+        }
+      });
+
+      DOM.historyListContainer.appendChild(card);
+    }
+  } catch (err) {
+    console.error("Error displaying history list:", err);
+    DOM.historyListContainer.innerHTML = `<p style="color:var(--accent-red); padding:16px;">Failed to load saved workouts.</p>`;
+  }
 }
 
 // ==========================================================================
@@ -697,6 +1067,9 @@ function initEventListeners() {
     }
   });
 
+  // History Modal Button
+  DOM.historyBtn.addEventListener("click", openHistoryModal);
+
   // File Playback Controls
   DOM.filePlayPauseBtn.addEventListener("click", () => {
     if (DOM.videoElement.paused) {
@@ -721,7 +1094,20 @@ function initEventListeners() {
   // Session Actions
   DOM.sessionToggleBtn.addEventListener("click", toggleSession);
   DOM.sessionResetBtn.addEventListener("click", resetSession);
-  DOM.sessionEndBtn.addEventListener("click", showSummaryModal);
+  DOM.sessionEndBtn.addEventListener("click", endAndSaveSession);
+
+  // Summary Video Actions
+  DOM.summaryDownloadVideoBtn.addEventListener("click", () => {
+    if (state.currentSessionBlob) {
+      downloadVideoBlob(state.currentSessionBlob, state.activeRecordingMime);
+    }
+  });
+
+  DOM.summaryReplayAnalyzerBtn.addEventListener("click", () => {
+    if (state.currentSessionBlob) {
+      replayBlobInAnalyzer(state.currentSessionBlob);
+    }
+  });
 
   // Debug Panel Collapsible
   DOM.debugToggle.addEventListener("click", () => {
@@ -814,9 +1200,26 @@ function initEventListeners() {
   // Summary Modal Close
   DOM.closeSummaryBtn.addEventListener("click", () => {
     DOM.summaryModal.classList.add("hidden");
+    if (DOM.summaryVideoPlayer) DOM.summaryVideoPlayer.pause();
   });
   DOM.summaryCloseBtn.addEventListener("click", () => {
     DOM.summaryModal.classList.add("hidden");
+    if (DOM.summaryVideoPlayer) DOM.summaryVideoPlayer.pause();
+  });
+
+  // History Modal Close
+  DOM.closeHistoryBtn.addEventListener("click", () => {
+    DOM.historyModal.classList.add("hidden");
+  });
+  DOM.closeHistoryBottomBtn.addEventListener("click", () => {
+    DOM.historyModal.classList.add("hidden");
+  });
+
+  DOM.clearAllHistoryBtn.addEventListener("click", async () => {
+    if (confirm("Are you sure you want to delete all saved workouts and recordings?")) {
+      await storageService.clearAll();
+      await renderHistoryList();
+    }
   });
 
   // Setup / Help Modal

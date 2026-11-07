@@ -41,6 +41,11 @@
           🔊
         </button>
 
+        <!-- Saved Sessions / History Button -->
+        <button id="historyBtn" class="icon-btn" title="Saved Sessions & Replays" aria-label="Open Saved Workouts">
+          📼
+        </button>
+
         <!-- Settings Button -->
         <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Open Settings">
           ⚙️
@@ -63,6 +68,12 @@
 
         <!-- Big 2-3 Meter Readable Rep HUD -->
         <div class="hud-overlay">
+          <!-- Live Recording Status Indicator -->
+          <div id="recBadge" class="rec-badge hidden">
+            <span class="rec-dot"></span>
+            <span id="recText">REC 00:00</span>
+          </div>
+
           <!-- Live Feedback Banner -->
           <div id="feedbackBanner" class="feedback-banner status-waiting">
             <span id="feedbackIcon" class="feedback-icon">⏳</span>
@@ -281,6 +292,25 @@
             <span id="summaryTopFault" class="highlight-value">None! Clean session!</span>
           </div>
 
+          <!-- Video Replay & Download Section -->
+          <div id="summaryVideoCard" class="summary-video-card hidden">
+            <div class="video-card-header">
+              <span class="video-title">📹 Workout Video Recording</span>
+              <span id="summaryVideoDuration" class="video-duration">00:00</span>
+            </div>
+            <div class="summary-video-wrapper">
+              <video id="summaryVideoPlayer" controls playsinline preload="metadata"></video>
+            </div>
+            <div class="summary-video-actions">
+              <button id="summaryDownloadVideoBtn" class="btn-sub-action">
+                📥 Download Video
+              </button>
+              <button id="summaryReplayAnalyzerBtn" class="btn-sub-action primary-sub">
+                🔄 Replay in Analyzer
+              </button>
+            </div>
+          </div>
+
           <h3>Rep-by-Rep Breakdown</h3>
           <div class="rep-history-wrapper">
             <table class="rep-history-table">
@@ -301,6 +331,26 @@
         </div>
         <div class="modal-footer">
           <button id="summaryCloseBtn" class="btn-primary-action">Back to Workout</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Saved Sessions History Modal -->
+    <div id="historyModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <h2 id="historyTitle">📼 Saved Workouts & Replays</h2>
+          <button id="closeHistoryBtn" class="modal-close" aria-label="Close History">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="settings-hint">Rewatch your past sessions, analyze your form in slow motion, or download recorded clips.</p>
+          <div id="historyListContainer" class="history-list-container">
+            <!-- Dynamic workout session cards injected here -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="clearAllHistoryBtn" class="btn-text-danger">Delete All</button>
+          <button id="closeHistoryBottomBtn" class="btn-primary-action">Done</button>
         </div>
       </div>
     </div>
